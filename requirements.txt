@@ -1,0 +1,5 @@
+# WooCommerce & OpenAI Title Refinement Automation
+# Install with: pip install -r requirements.txt
+
+requests>=2.28.0
+python-dotenv
