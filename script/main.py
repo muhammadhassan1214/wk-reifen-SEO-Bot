@@ -173,10 +173,11 @@ class WooCommerceAPI:
                 all_products.extend(products)
                 print(f"Got {len(products)} products (Total: {len(all_products)})")
 
-                # Check if we've reached the last page
+
                 # WooCommerce returns total pages in headers
                 total_pages = int(response.headers.get('X-WP-TotalPages', 1))
 
+                # Check if we've reached the last page
                 if page >= total_pages:
                     break
 
