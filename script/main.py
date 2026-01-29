@@ -574,5 +574,49 @@ def main():
     )
 
 
+# =============================================================================
+# Schedular for Weekly Execution
+# =============================================================================
+
+# Calculation: 7 days * 24 hours * 60 minutes * 60 seconds
+WEEKLY_INTERVAL_SECONDS = 7 * 24 * 60 * 60
+
+def run_weekly():
+    print("Starting scheduled automation (runs every 7 days)")
+    run_count = 0
+
+    while True:
+        run_count += 1
+        start = time.time()
+
+        print(f"\n{'=' * 50}")
+        print(f"WEEKLY RUN #{run_count}")
+        print(f"Started: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"{'=' * 50}")
+
+        try:
+            main()
+        except Exception as e:
+            print(f"Unhandled error in scheduled run #{run_count}: {e}")
+
+        # --- Timing Logic ---
+        elapsed = time.time() - start
+        remaining = WEEKLY_INTERVAL_SECONDS - elapsed
+
+        if remaining > 0:
+            next_run_timestamp = time.time() + remaining
+            next_run_time = datetime.fromtimestamp(next_run_timestamp).strftime('%Y-%m-%d %H:%M:%S')
+
+            print(f"Run #{run_count} completed in {elapsed:.1f}s")
+            print(f"Next run scheduled for: {next_run_time}")
+
+            # Changed log to show Days for better readability
+            print(f"Waiting {remaining / (3600 * 24):.2f} days...")
+
+            time.sleep(remaining)
+        else:
+            print(f"Run #{run_count} took longer than a week! Starting next run immediately.")
+
+
 if __name__ == "__main__":
-    main()
+    run_weekly()
