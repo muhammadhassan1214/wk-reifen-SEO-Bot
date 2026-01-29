@@ -1,3 +1,4 @@
+import re
 import os
 import json
 import time
@@ -142,24 +143,54 @@ class WooCommerceAPI:
         self.session = requests.Session()
         self.session.headers.update(config.api_headers)
 
-    def get_all_products(self) -> list[dict]:
-        """Fetch all products from WooCommerce"""
+    def get_all_products(self, per_page: int = 100) -> list[dict]:
         print("📦 Fetching products from WooCommerce...")
 
-        try:
-            response = self.session.get(
-                f"{self.config.base_url}/products",
-                timeout=60
-            )
-            response.raise_for_status()
+        all_products = []
+        page = 1
 
-            products = response.json()
-            print(f"📦 Total products fetched: {len(products)}")
-            return products
+        while True:
+            try:
+                print(f"   Fetching page {page}...", end=" ")
 
-        except requests.exceptions.RequestException as e:
-            print(f"   ✗ Error fetching products: {e}")
-            raise
+                response = self.session.get(
+                    f"{self.config.base_url}/products",
+                    params={
+                        "per_page": per_page,
+                        "page": page
+                    },
+                    timeout=60
+                )
+                response.raise_for_status()
+
+                products = response.json()
+
+                if not products:
+                    # No more products, exit the loop
+                    print("No more products.")
+                    break
+
+                all_products.extend(products)
+                print(f"Got {len(products)} products (Total: {len(all_products)})")
+
+                # Check if we've reached the last page
+                # WooCommerce returns total pages in headers
+                total_pages = int(response.headers.get('X-WP-TotalPages', 1))
+
+                if page >= total_pages:
+                    break
+
+                page += 1
+
+                # Small delay between pagination requests
+                time.sleep(0.5)
+
+            except requests.exceptions.RequestException as e:
+                print(f"\n   ✗ Error fetching page {page}: {e}")
+                raise
+
+        print(f"📦 Total products fetched: {len(all_products)}")
+        return all_products
 
     def update_product(self, product_id: int, update_data: dict) -> bool:
         """Update a product with the provided data"""
@@ -200,33 +231,51 @@ class OpenAIAPI:
 
     def refine_title(self, original_title: str) -> Optional[str]:
         """Refine a product title using OpenAI"""
-        system_prompt = """You are an SEO expert specializing in e-commerce product titles for a German tire shop.
-Your task is to refine product titles to be:
-- SEO-friendly and keyword-optimized
-- Clear and descriptive
-- Professional and engaging
-- Concise (under 70 characters when possible)
-- In German language
+        system_prompt = """Sie sind SEO-Experte und spezialisiert auf Produkttitel für einen deutschen Reifenhändler.
 
-Return ONLY the refined title, nothing else."""
+Ihre Aufgabe ist es, die Produkttitel so zu optimieren, dass sie:
 
-        user_prompt = f"Refine this product title for better SEO: {original_title}"
+- SEO-freundlich und keywordoptimiert sind
+- klar und informativ sind
+- professionell und ansprechend sind
+- prägnant sind (maximal 60 Zeichen)
+
+Bitte senden Sie uns ausschließlich den optimierten Titel."""
+
+        user_prompt = f"Optimieren Sie diesen Produkttitel für eine bessere Suchmaschinenoptimierung: {original_title}"
 
         return self._make_openai_request(system_prompt, user_prompt)
 
     def refine_description(self, original_description: str, product_title: str) -> Optional[str]:
         """Refine an og_description using OpenAI for SEO optimization"""
-        system_prompt = """You are an SEO expert specializing in e-commerce meta descriptions for a German tire shop.
-Your task is to create SEO-optimized og_descriptions that:
-- Are compelling and encourage clicks
-- Include relevant keywords naturally
-- Are between 150-160 characters
-- Are in German language
-- Highlight key product features
+        system_prompt = """Du bist ein SEO-Experte für E-Commerce-Reifenprodukte.
 
-Return ONLY the refined description, nothing else."""
+Erstelle ausschließlich eine Meta-Beschreibung für ein Produkt.
 
-        user_prompt = f"""Create an SEO-optimized og_description for this tire product.
+Die Meta-Beschreibung muss:
+- sachlich und neutral formuliert sein
+- SEO-optimiert und CTR-orientiert sein
+- keine Leistungsversprechen enthalten (kein Grip, keine Sicherheit, kein Komfort)
+- keine Qualitätsaussagen oder Bewertungen enthalten
+- ausschließlich kauf-, preis- und verfügbarkeitsorientierte Keywords verwenden
+- rechtlich unkritisch (UWG-konform) sein
+- für Massenautomatisierung (100.000+ Produkte) geeignet sein
+- maximal 140-150 Zeichen lang sein
+
+Erlaubte Keywords (variabel kombinieren, nicht wiederholen):
+günstig, besonders günstig, preiswert, attraktiver Preis, fairer Preis,
+online kaufen, jetzt online kaufen, direkt online bestellen,
+sofort verfügbar, direkt verfügbar, ab Lager lieferbar,
+schneller Versand, zügiger Versand, zeitnaher Versand
+
+Nicht erlaubt:
+hervorragend, top, sicher, Sicherheit, Grip, leise, Komfort,
+beste Qualität, Premium, Testsieger, Empfehlung, Top-Qualität
+
+Es wird nur die Meta-Beschreibung zurückgegeben.
+Keine Erklärungen, keine Überschriften, kein zusätzlicher Text."""
+
+        user_prompt = f"""Erstellen Sie eine SEO-optimierte Produktbeschreibung für dieses Reifenprodukt..
 Product title: {product_title}
 Current description: {original_description}"""
 
@@ -284,9 +333,6 @@ def generate_slug(title: str) -> str:
     # Convert to lowercase and replace spaces with hyphens
     slug = title.lower().replace(' ', '-')
 
-    # Remove any special characters that shouldn't be in a slug
-    # Keep only alphanumeric, hyphens, and German umlauts
-    import re
     # Replace German umlauts
     slug = slug.replace('ä', 'ae').replace('ö', 'oe').replace('ü', 'ue')
     slug = slug.replace('ß', 'ss')
@@ -381,55 +427,26 @@ class TitleRefinementAutomation:
             self.checkpoint.mark_processed(product_id)
             return True
 
-        # Step 4: Build the SEO title with site name suffix (matching Yoast format)
-        seo_title = f"{refined_title} - WK Reifen"
-
-        # Step 5: Update the product in WooCommerce
-        # =========================================================================
-        # IMPORTANT: Title appears in 9 locations in the product data:
-        #
-        # DIRECTLY UPDATABLE VIA API:
-        # 1. name - Main product title
-        # 2. slug - URL slug
-        #
-        # YOAST SEO META FIELDS (controls the other 7 title occurrences):
-        # 3. _yoast_wpseo_title - Controls: yoast_head <title>, og:title,
-        #    yoast_head_json['title'], yoast_head_json['og_title'],
-        #    and schema graph name fields
-        # 4. _yoast_wpseo_metadesc - Controls: og:description
-        #
-        # The yoast_head and yoast_head_json fields are READ-ONLY and are
-        # auto-generated by WordPress/Yoast when the product is viewed.
-        # By updating name and _yoast_wpseo_title, all 9 title instances
-        # will be updated when the page is regenerated.
-        # =========================================================================
-
         update_data = {
             "name": refined_title,
             "slug": new_slug,
             "meta_data": [
                 {
-                    # Yoast SEO Title - This controls:
-                    # - <title> tag in yoast_head
-                    # - og:title meta tag in yoast_head
-                    # - yoast_head_json['title']
-                    # - yoast_head_json['og_title']
-                    # - schema @graph WebPage name
-                    # - schema @graph BreadcrumbList itemListElement name
                     "key": "_yoast_wpseo_title",
-                    "value": seo_title
+                    "value": refined_title
                 },
                 {
-                    # Yoast SEO Meta Description - This controls:
-                    # - og:description in yoast_head
-                    # - yoast_head_json['og_description']
                     "key": "_yoast_wpseo_metadesc",
                     "value": refined_description
+                },
+                {
+                    "key": "_yoast_wpseo_focuskw",
+                    "value": refined_title
                 }
             ]
         }
 
-        print(f"   SEO Title: {seo_title}")
+        print(f"   SEO Title: {refined_title}")
 
         if self.woo_api.update_product(product_id, update_data):
             print(f"   ✓ Successfully updated!")
@@ -441,7 +458,7 @@ class TitleRefinementAutomation:
                 previous_title=original_title,
                 new_title=refined_title,
                 new_slug=new_slug,
-                seo_title=seo_title,
+                seo_title=refined_title,
                 previous_description=original_description,
                 new_description=refined_description
             )
@@ -552,7 +569,7 @@ def main():
 
     automation.run(
         dry_run=False,
-        limit=3
+        limit=None
     )
 
 
