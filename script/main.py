@@ -1,4 +1,3 @@
-import re
 import os
 import json
 import time
@@ -107,15 +106,12 @@ class UpdateLogger:
         return []
 
     def log_update(self, item_id: int, previous_title: str, new_title: str,
-                   new_slug: str, seo_title: str,
                    previous_description: str, new_description: str):
         """Log an update operation with all updated fields"""
         log_entry = {
             "item_id": item_id,
             "previous_title": previous_title,
             "new_title": new_title,
-            "new_slug": new_slug,
-            "seo_title": seo_title,
             "previous_description": previous_description,
             "new_description": new_description,
             "updated_at": datetime.now().isoformat()
@@ -329,33 +325,17 @@ Current description: {original_description}"""
 # UTILITY FUNCTIONS
 # =============================================================================
 
-def generate_slug(title: str) -> str:
-    """Generate a slug from the title using the formula: new_title.lower().replace(' ', '-')"""
-    # Convert to lowercase and replace spaces with hyphens
-    slug = title.lower().replace(' ', '-')
-
-    # Replace German umlauts
-    slug = slug.replace('ä', 'ae').replace('ö', 'oe').replace('ü', 'ue')
-    slug = slug.replace('ß', 'ss')
-
-    # Remove any character that's not alphanumeric or hyphen
-    slug = re.sub(r'[^a-z0-9\-]', '', slug)
-
-    # Remove multiple consecutive hyphens
-    slug = re.sub(r'-+', '-', slug)
-
-    # Remove leading/trailing hyphens
-    slug = slug.strip('-')
-
-    return slug
-
-
-def get_og_description(product: dict) -> str:
+def get_orignal_title_and_description(product: dict) -> tuple[str, str]:
     """Extract og_description from product data"""
     try:
-        return product.get("yoast_head_json", {}).get("og_description", "")
+        yoast_json = product.get("yoast_head_json", {})
+        title = yoast_json.get("og_title", "")
+        description = yoast_json.get("og_description", "")
+        if title and description:
+            return title, description
+        return "", ""
     except (AttributeError, TypeError):
-        return ""
+        return "", ""
 
 
 # =============================================================================
@@ -381,8 +361,7 @@ class TitleRefinementAutomation:
     def process_single_product(self, product: dict) -> bool:
         """Process a single product: refine title, generate slug, refine description"""
         product_id = product["id"]
-        original_title = product["name"]
-        original_description = get_og_description(product)
+        original_title, original_description = get_orignal_title_and_description(product)
 
         print(f"\n🔄 Processing Product ID: {product_id}")
         print(f"   Original Title: {original_title}")
@@ -401,11 +380,7 @@ class TitleRefinementAutomation:
             self.stats["failed"] += 1
             return False
 
-        # Step 2: Generate new slug from the refined title
-        new_slug = generate_slug(refined_title)
-
         print(f"   Refined Title: {refined_title}")
-        print(f"   New Slug: {new_slug}")
 
         # Step 3: Refine the description using OpenAI
         refined_description = self.openai_api.refine_description(
@@ -429,8 +404,6 @@ class TitleRefinementAutomation:
             return True
 
         update_data = {
-            "name": refined_title,
-            "slug": new_slug,
             "meta_data": [
                 {
                     "key": "_yoast_wpseo_title",
@@ -458,8 +431,6 @@ class TitleRefinementAutomation:
                 item_id=product_id,
                 previous_title=original_title,
                 new_title=refined_title,
-                new_slug=new_slug,
-                seo_title=refined_title,
                 previous_description=original_description,
                 new_description=refined_description
             )
@@ -507,8 +478,7 @@ class TitleRefinementAutomation:
             if dry_run:
                 # In dry run, just show what would happen
                 product_id = product["id"]
-                original_title = product["name"]
-                original_description = get_og_description(product)
+                original_title, original_description = get_orignal_title_and_description(product)
 
                 if self.checkpoint.is_processed(product_id):
                     print(f" Product ID: {product_id} - Already processed, would skip")
@@ -520,9 +490,7 @@ class TitleRefinementAutomation:
 
                 refined_title = self.openai_api.refine_title(original_title)
                 if refined_title:
-                    new_slug = generate_slug(refined_title)
                     print(f"   Would refine to: {refined_title}")
-                    print(f"   New slug would be: {new_slug}")
 
                     refined_description = self.openai_api.refine_description(
                         original_description, refined_title
